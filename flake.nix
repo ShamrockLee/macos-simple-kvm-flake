@@ -110,8 +110,9 @@
 
       in
       {
-        packages = { inherit start init; };
-
-        defaultPackage = start;
+        packages = {
+          inherit start init;
+          default = start;
+        };
       });
 }
