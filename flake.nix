@@ -48,21 +48,20 @@
             chmod a+w OVMF_VARS.fd
             chmod a+w ESP.qcow2
 
-            export ramSize=$(jq -r '.ramSize' settings.json)
-            export cores=$(jq -r '.cores' settings.json)
-            export headless=$(jq -r '.headless' settings.json)
+            ramSize="$(jq -r '.ramSize' settings.json)"; export ramSize
+            cores="$(jq -r '.cores' settings.json)"; export cores
+            headless="$(jq -r '.headless' settings.json)"; export headless
 
+            declare -a headlessCommandArray=()
             if [ "$headless" == "true" ]; then
-              headless="-nographic -vnc :0 -k en-us"
-            else
-              headless=""
+              headlessCommandArray=( -nographic -vnc :0 -k en-us )
             fi
 
             qemu-system-x86_64 \
               -enable-kvm \
-              -m $ramSize \
+              -m "$ramSize" \
               -machine q35,accel=kvm \
-              -smp $(( $cores * 2 )),cores=$cores \
+              -smp $(( "$cores" * 2 )),cores="$cores" \
               -cpu Penryn,vendor=GenuineIntel,kvm=on,+sse3,+sse4.2,+aes,+xsave,+avx,+xsaveopt,+xsavec,+xgetbv1,+avx2,+bmi2,+smep,+bmi1,+fma,+movbe,+invtsc \
               -device isa-applesmc,osk="ourhardworkbythesewordsguardedpleasedontsteal(c)AppleComputerInc" \
               -smbios type=2 \
@@ -80,7 +79,7 @@
               -device ide-hd,bus=sata.3,drive=InstallMedia \
               -drive id=SystemDisk,if=none,file=disk0.qcow2 \
               -device virtio-blk,drive=SystemDisk \
-              $headless \
+              "''${headlessCommandArray[@]}" \
           '';
 
         init = pkgs.writeShellScriptBin "init" ''
@@ -103,35 +102,49 @@
 
           # get settings from user input
           echo "choose disk size (example: 64G)" && echo -n "answer: "
-          read diskSize
+          read -r diskSize
           echo "choose ram size (example: 6G)" && echo -n "answer: "
-          read ramSize
+          read -r ramSize
           echo "choose number of cpu cores (example: 2)" && echo -n "answer: "
-          read cores
+          read -r cores
           echo "choose MacOS version (example: 10.15) (leave empty for latest)" && echo -n "answer: "
-          read osVersion
+          read -r osVersion
 
           echo "{}" > settings.json
           jq ".ramSize = \"$ramSize\"" settings.json | sponge settings.json
           jq ".cores = \"$cores\"" settings.json | sponge settings.json
           jq ".headless = \"false\"" settings.json | sponge settings.json
 
-          if [ "$osVersion" == "" ]; then
+          if [ -z "$osVersion" ]; then
             ${fetchMacOS}/bin/fetchMacOS
           else
-            ${fetchMacOS}/bin/fetchMacOS -v $osVersion
+            ${fetchMacOS}/bin/fetchMacOS -v "$osVersion"
           fi
           dmg2img ./BaseSystem/BaseSystem.dmg ./BaseSystem.img
           rm -r ./BaseSystem
 
-          qemu-img create -f qcow2 disk0.qcow2 $diskSize
+          qemu-img create -f qcow2 disk0.qcow2 "$diskSize"
         '';
 
+        tests-with-shellcheck = lib.mapAttrs' (name: value: lib.nameValuePair
+          ("test-shellcheck-" + name)
+          (pkgs.runCommandLocal ("test-shellcheck-" + name) {
+            nativeBuildInputs = with pkgs; [
+              shellcheck
+            ];
+          } ''
+            set -eu -o pipefail
+            shellcheck "${value}/bin/${name}"
+            touch "$out"
+          '')
+        ) (removeAttrs self.packages.${system} [ "default" ]);
       in
       {
         packages = {
           inherit start init;
           default = start;
         };
+
+        checks = tests-with-shellcheck;
       });
 }
