@@ -10,6 +10,8 @@
 
     flake-utils.lib.eachDefaultSystem (system:
       let
+        lib = nixpkgs.lib;
+
         pkgs = nixpkgs.legacyPackages.${system};
 
         fetchMacOS = pkgs.stdenv.mkDerivation {
@@ -28,6 +30,14 @@
         start =
           pkgs.writeShellScriptBin "start" ''
             set -e
+
+            # Prefix PATH with utilities required
+            PATH="${lib.makeBinPath (with pkgs; [
+              coreutils
+              jq
+              qemu
+            ])}''${PATH:+:}''${PATH-}"
+            export PATH
 
             if [ ! -e disk0.qcow2 ];then
               ${self.packages.${system}.init}/bin/init
@@ -48,7 +58,7 @@
               headless=""
             fi
 
-            ${pkgs.qemu}/bin/qemu-system-x86_64 \
+            qemu-system-x86_64 \
               -enable-kvm \
               -m $ramSize \
               -machine q35,accel=kvm \
@@ -75,6 +85,17 @@
 
         init = pkgs.writeShellScriptBin "init" ''
           set -e
+
+          # Prefix PATH with utilities required
+          PATH="${lib.makeBinPath (with pkgs; [
+            coreutils
+            dmg2img
+            jq
+            moreutils
+            qemu
+          ])}''${PATH:+:}''${PATH-}"
+          export PATH
+
           if [ -e disk0.qcow2 ]; then
             echo "The current directory already contains disk0.qcow2. Delete it first!"
             exit 1
@@ -90,22 +111,20 @@
           echo "choose MacOS version (example: 10.15) (leave empty for latest)" && echo -n "answer: "
           read osVersion
 
-          jq=${pkgs.jq}/bin/jq
-          sponge=${pkgs.moreutils}/bin/sponge
           echo "{}" > settings.json
-          $jq ".ramSize = \"$ramSize\"" settings.json | $sponge settings.json
-          $jq ".cores = \"$cores\"" settings.json | $sponge settings.json
-          $jq ".headless = \"false\"" settings.json | $sponge settings.json
+          jq ".ramSize = \"$ramSize\"" settings.json | sponge settings.json
+          jq ".cores = \"$cores\"" settings.json | sponge settings.json
+          jq ".headless = \"false\"" settings.json | sponge settings.json
 
           if [ "$osVersion" == "" ]; then
             ${fetchMacOS}/bin/fetchMacOS
           else
             ${fetchMacOS}/bin/fetchMacOS -v $osVersion
           fi
-          ${pkgs.dmg2img}/bin/dmg2img ./BaseSystem/BaseSystem.dmg ./BaseSystem.img
+          dmg2img ./BaseSystem/BaseSystem.dmg ./BaseSystem.img
           rm -r ./BaseSystem
 
-          ${pkgs.qemu}/bin/qemu-img create -f qcow2 disk0.qcow2 $diskSize
+          qemu-img create -f qcow2 disk0.qcow2 $diskSize
         '';
 
       in
